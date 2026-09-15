@@ -300,8 +300,19 @@ HwcDisplay::ConfigError HwcDisplay::SetConfig(ConfigId config) {
   ALOGV("Blocking config succeeded.");
   configs_.active_config_id = config;
   staged_mode_config_id_.reset();
-  // set new vsync period
-  vsync_worker_->SetVsyncPeriodNs(new_config->mode.GetVSyncPeriodNs());
+  // Virtual displays intentionally do not create a VSyncWorker in Init().
+  if (vsync_worker_) {
+    vsync_worker_->SetVsyncPeriodNs(new_config->mode.GetVSyncPeriodNs());
+  } else if (is_virtual_) {
+    ALOGI(
+        "ARDA_VD_VSYNC_FIX skipping vsync period update for virtual display "
+        "d=%d period_ns=%d",
+        int(handle_), int(new_config->mode.GetVSyncPeriodNs()));
+  } else {
+    ALOGE(
+        "ARDA_VD_VSYNC_FIX missing vsync worker for non-virtual display d=%d",
+        int(handle_));
+  }
   hwc_->LogRefreshRateChanges();
   return ConfigError::kNone;
 }
@@ -378,6 +389,7 @@ auto HwcDisplay::ValidateStagedComposition() -> ValidateResult {
 
   auto [composition,
         short_circuited] = pipeline_->planner->ValidateDisplay(this);
+
   validated_composition_.emplace(std::move(composition));
   if (!short_circuited) {
     last_presented_composition_.SetRequestedContext(
@@ -553,7 +565,19 @@ auto HwcDisplay::PresentStagedComposition(
     return true;
   }
 
-  vsync_worker_->AddLastPresentFence(out_present_fence);
+  if (vsync_worker_) {
+    vsync_worker_->AddLastPresentFence(out_present_fence);
+  } else if (is_virtual_) {
+    ALOGI(
+        "ARDA_VD_VSYNC_FIX skipping present fence tracking for virtual "
+        "display d=%d",
+        int(handle_));
+  } else {
+    ALOGE(
+        "ARDA_VD_VSYNC_FIX missing vsync worker during present for "
+        "non-virtual display d=%d",
+        int(handle_));
+  }
 
   for (auto &l : layers_) {
     if (l.second.GetPriorBufferScanOutFlag()) {
@@ -1374,7 +1398,20 @@ void HwcDisplay::ApplyCommitChanges(const AtomicCommitArgs &a_args,
     configs_.active_config_id = staged_mode_config_id_.value_or(
         configs_.active_config_id);
     staged_mode_config_id_.reset();
-    vsync_worker_->SetVsyncPeriodNs(a_args.display_mode->GetVSyncPeriodNs());
+
+    if (vsync_worker_) {
+      vsync_worker_->SetVsyncPeriodNs(a_args.display_mode->GetVSyncPeriodNs());
+    } else if (is_virtual_) {
+      ALOGI(
+          "ARDA_VD_VSYNC_FIX staged config skipping vsync period update for "
+          "virtual display d=%d period_ns=%d",
+          int(handle_), int(a_args.display_mode->GetVSyncPeriodNs()));
+    } else {
+      ALOGE(
+          "ARDA_VD_VSYNC_FIX staged config missing vsync worker for "
+          "non-virtual display d=%d",
+          int(handle_));
+    }
   }
 
   if (a_args.hdcp_content_type.has_value() ||

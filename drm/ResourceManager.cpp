@@ -248,14 +248,35 @@ auto ResourceManager::GetVirtualDisplayPipeline()
     -> std::shared_ptr<DrmDisplayPipeline> {
   for (auto &drm : drms_) {
     for (const auto &conn : drm->GetWritebackConnectors()) {
-      auto pipeline = DrmDisplayPipeline::CreatePipeline(*conn);
+      // Use the same backend factory as physical displays. The backend owns
+      // initialization of pipeline-specific planner/state-manager objects.
+      auto pipeline =
+          BackendManager::GetInstance().CreatePipelineForConnector(*conn);
       if (!pipeline) {
-        ALOGE("Failed to create pipeline for writeback connector %s",
-              conn->GetName().c_str());
+        ALOGE(
+            "ARDA_VD_REGISTERED_BACKEND_FIX failed to create backend pipeline "
+            "connector=%s",
+            conn->GetName().c_str());
+        continue;
       }
-      if (pipeline) {
-        return pipeline;
+
+      ALOGI(
+          "ARDA_VD_REGISTERED_BACKEND_FIX ready connector=%s "
+          "driver=%s planner=%p asm=%p device=%p crtc=%p",
+          conn->GetName().c_str(), conn->GetDev().GetName().c_str(),
+          pipeline->planner.get(), pipeline->atomic_state_manager.get(),
+          pipeline->device, pipeline->crtc.get());
+
+      if (!pipeline->planner || !pipeline->atomic_state_manager) {
+        ALOGE(
+            "ARDA_VD_REGISTERED_BACKEND_FIX incomplete backend pipeline "
+            "connector=%s planner=%p asm=%p",
+            conn->GetName().c_str(), pipeline->planner.get(),
+            pipeline->atomic_state_manager.get());
+        continue;
       }
+
+      return pipeline;
     }
   }
   return {};
